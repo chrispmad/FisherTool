@@ -81,12 +81,41 @@ if(!file.exists('data/all_tsa_polygons.gpkg')){
   write_sf(tsa_polys, 'data/all_tsa_polygons.gpkg')
 } else {tsa_polys = read_sf('data/all_tsa_polygons.gpkg')}
 
-if(!file.exists('data/tsa_polygons_in_subb_dry.gpkg')){
-# Remove TSAs that have been retired before today's date.
-tsa_polys = tsa_polys |> filter(is.na(RETIREMENT_DATE))
+# Make a single file of all the TSAs that overlap with
+# the BEC zones. Also, keep only one summarized polygon
+# for each TSA_NUMBER (gets rid of overlapping sub-areas)
+if(!file.exists('data/tsa_polygons_in_bec_zones.gpkg')){
+  tsa_polys = tsa_polys |>
+    filter(is.na(RETIREMENT_DATE))
 
-# Simplify TSA polys at this point?
-tsa_polys = rmapshaper::ms_simplify(tsa_polys)
+  tsa_polys_simple = rmapshaper::ms_simplify(tsa_polys)
+
+  bec_zones = bind_rows(subb_dry,subb_moist)
+
+  tsa_polys_simple = tsa_polys_simple |>
+    filter(TSA_NUMBER_DESCRIPTION != 'GBR North TSA' | FEATURE_ID == 173) |>
+    st_join(bec_zones, st_intersects) |>
+    filter(!is.na(bec_zone)) |>
+    group_by(TSA_NUMBER,TSA_NUMBER_DESCRIPTION) |>
+    summarise() |>
+    ungroup()
+
+  leaflet() |>
+    addTiles() |>
+    addPolygons(data = tsa_polys_simple |>
+                  st_transform(crs = 4326))
+
+  write_sf(tsa_polys_simple, 'data/tsa_polygons_in_bec_zones.gpkg')
+} else {
+  read_sf('data/tsa_polygons_in_bec_zones.gpkg')
+}
+
+if(!file.exists('data/tsa_polygons_in_subb_dry.gpkg')){
+  # Remove TSAs that have been retired before today's date.
+  tsa_polys = tsa_polys |> filter(is.na(RETIREMENT_DATE))
+
+  # Simplify TSA polys at this point?
+  tsa_polys = rmapshaper::ms_simplify(tsa_polys)
 
 # Identify which TSAs are completely overlapped by other, larger TSAs; remove the former.
 intersection_table = tsa_polys |>
@@ -335,223 +364,84 @@ write_sf(subb_dry_pixels, 'data/subb_dry_pixels.gpkg')
   subb_dry_pixels = read_sf('data/subb_dry_pixels.gpkg')
   }
 
+if(!file.exists('data/subb_dry_pixels.tif')){
 
+  ## Attempting to make the pixels above, but as rasters.
 
+  # Moist:
 
+  hex_moist = hexagon_grid_subb_moist |>
+    filter(!duplicated(ID))
 
-## Attempting to make the pixels above, but as rasters.
-
-# Moist:
-
-hex_moist = hexagon_grid_subb_moist |>
-  filter(!duplicated(ID))
-
-subb_moist_r = rast(
-  stars::st_rasterize(
-    hex_moist,
-    dx = 100, dy = 100
+  subb_moist_r = rast(
+    stars::st_rasterize(
+      hex_moist,
+      dx = 100, dy = 100
     )
   )
 
-names(subb_moist_r)[1:2] <- c("ID","tsa_obj_id")
+  names(subb_moist_r)[1:2] <- c("ID","tsa_obj_id")
 
-subb_moist_r = terra::mask(subb_moist_r,
-            rast(stars::st_rasterize(hex_moist,
-                                     dx = 100, dy = 100)))
+  subb_moist_r = terra::mask(subb_moist_r,
+                             rast(stars::st_rasterize(hex_moist,
+                                                      dx = 100, dy = 100)))
 
-hex_moist = st_transform(hex_moist, 4326)
+  hex_moist = st_transform(hex_moist, 4326)
 
-subb_moist_r = project(subb_moist_r, hex_moist)
+  subb_moist_r = project(subb_moist_r, hex_moist)
 
-# Lastly, make some random values
-subb_moist_r$den = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
-subb_moist_r$branch = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
-subb_moist_r$cwd = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
-subb_moist_r$cav = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
-subb_moist_r$active = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
-subb_moist_r$open = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  # Lastly, make some random values
+  subb_moist_r$den = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  subb_moist_r$branch = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  subb_moist_r$cwd = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  subb_moist_r$cav = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  subb_moist_r$active = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
+  subb_moist_r$open = sample(c(0,1),terra::ncell(subb_moist_r), replace = T)
 
-terra::writeRaster(subb_moist_r, 'data/subb_moist_pixels.tif',
-                   overwrite = T)
+  terra::writeRaster(subb_moist_r, 'data/subb_moist_pixels.tif',
+                     overwrite = T)
 
-# Dry
+  # Dry
 
-hex_dry = hexagon_grid_subb_dry |>
-  filter(!duplicated(ID))
+  hex_dry = hexagon_grid_subb_dry |>
+    filter(!duplicated(ID))
 
-subb_dry_r = rast(
-  stars::st_rasterize(
-    hex_dry,
-    dx = 100, dy = 100
+  subb_dry_r = rast(
+    stars::st_rasterize(
+      hex_dry,
+      dx = 100, dy = 100
+    )
   )
-)
 
-names(subb_dry_r)[1:2] <- c("ID","tsa_obj_id")
+  names(subb_dry_r)[1:2] <- c("ID","tsa_obj_id")
 
-subb_dry_r = terra::mask(subb_dry_r,
+  subb_dry_r = terra::mask(subb_dry_r,
                            rast(stars::st_rasterize(hex_dry,
                                                     dx = 100, dy = 100)))
 
-hex_dry = st_transform(hex_dry, 4326)
+  hex_dry = st_transform(hex_dry, 4326)
 
-subb_dry_r = project(subb_dry_r, hex_dry)
+  subb_dry_r = project(subb_dry_r, hex_dry)
 
-# Lastly, make some random values
-subb_dry_r$den = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
-subb_dry_r$branch = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
-subb_dry_r$cwd = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
-subb_dry_r$cav = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
-subb_dry_r$active = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
-subb_dry_r$open = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  # Lastly, make some random values
+  subb_dry_r$den = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  subb_dry_r$branch = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  subb_dry_r$cwd = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  subb_dry_r$cav = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  subb_dry_r$active = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
+  subb_dry_r$open = sample(c(0,1),terra::ncell(subb_dry_r), replace = T)
 
-terra::writeRaster(subb_dry_r, 'data/subb_dry_pixels.tif',
-                   overwrite = T)
+  # Add in which polygon each pixel is in.
+  hex_test = hex_dry |> slice(1:10)
 
-# leaflet() |>
-#   addTiles() |>
-#   addPolygons(
-#     color = 'black',
-#     weight = 1,
-#     fillColor = 'transparent',
-#     data = hex_moist |> filter(ID == 95)) |>
-#     addRasterImage(raster::raster(subb_moist_r[subb_moist_r$ID==95]))
+  terra::extract(subb_dry_r,hex_test, fun = mean)
 
+  terra::writeRaster(subb_dry_r, 'data/subb_dry_pixels.tif',
+                     overwrite = T)
 
-terra::writeRaster(subb_moist_r, 'data/raster_size_check.tif',
-                   overwrite = T)
-
-
-subb_moist_r[subb_moist_r$tsa_obj_id == 120301]
-subb_moist_r = rast(x = hexagon_grid_subb_moist |> filter(!duplicated(ID)), resolution = 1000)
-rasterize(hexagon_grid_subb_moist, subb_moist_r)
-subb_dry_pixels = st_make_grid(x = hexagon_grid_subb_dry |> filter(!duplicated(ID)), cellsize = units::set_units(1000000, "m2"))
-# boreal_pixels = st_make_grid(x = hexagon_grid_boreal |> filter(!duplicated(ID)), cellsize = units::set_units(1000000, "m2"))
-
-subb_moist_pixels = st_set_geometry(tibble(placeholder = rep(1,length(subb_moist_pixels))), subb_moist_pixels)
-subb_dry_pixels = st_set_geometry(tibble(placeholder = rep(1,length(subb_dry_pixels))), subb_dry_pixels)
-# boreal_pixels = st_set_geometry(tibble(placeholder = rep(1,length(boreal_pixels))), boreal_pixels)
-
-# Add in an ID column for the subb_moist_pixels
-subb_moist_pixels$X = st_coordinates(st_centroid(subb_moist_pixels))[,1]
-subb_moist_pixels$Y = st_coordinates(st_centroid(subb_moist_pixels))[,2]
-
-subb_dry_pixels$X = st_coordinates(st_centroid(subb_dry_pixels))[,1]
-subb_dry_pixels$Y = st_coordinates(st_centroid(subb_dry_pixels))[,2]
-
-# boreal_pixels$X = st_coordinates(st_centroid(boreal_pixels))[,1]
-# boreal_pixels$Y = st_coordinates(st_centroid(boreal_pixels))[,2]
-
-subb_moist_pixels = subb_moist_pixels |>
-  arrange(Y,X) |>
-  mutate(ID = row_number()) |>
-  dplyr::select(-X, -Y)
-
-subb_dry_pixels = subb_dry_pixels |>
-  arrange(Y,X) |>
-  mutate(ID = row_number()) |>
-  dplyr::select(-X, -Y)
-
-# boreal_pixels = boreal_pixels |>
-#   arrange(Y,X) |>
-#   mutate(ID = row_number()) |>
-#   dplyr::select(-X, -Y)
-
-subb_moist_pixels = subb_moist_pixels |>
-  mutate(den = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-         branch = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-         cwd = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-         cav = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-         active = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-         open = sample(c(0,1),nrow(subb_moist_pixels), replace = T),
-  ) |>
-  dplyr::select(-placeholder)
-
-subb_dry_pixels = subb_dry_pixels |>
-  mutate(den = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-         branch = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-         cwd = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-         cav = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-         active = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-         open = sample(c(0,1),nrow(subb_dry_pixels), replace = T),
-  ) |>
-  dplyr::select(-placeholder)
-
-# Just keep pixels that are inside the hexagons overlaying the BEC zone of interest.
-subb_moist_pixels = subb_moist_pixels |>
-  st_join(hexagon_grid_subb_moist |> filter(!duplicated(ID)) |> dplyr::select(hex_ID = ID)) |>
-  filter(!is.na(hex_ID))
-
-subb_dry_pixels = subb_dry_pixels |>
-  st_join(hexagon_grid_subb_dry |> filter(!duplicated(ID)) |> dplyr::select(hex_ID = ID)) |>
-  filter(!is.na(hex_ID))
-
-# And also strip away any pixels that fall outside of the BEC zones!
-subb_moist_pixels = subb_moist_pixels |>
-  st_join(subb_moist) |>
-  filter(!is.na(bec_zone))
-
-subb_dry_pixels = subb_dry_pixels |>
-  st_join(subb_dry) |>
-  filter(!is.na(bec_zone))
-
-
-
-
-
-
-# Make empty polygon for leaflet map when BEC zones / TSAs are not selected.
-empty_polygon = st_as_sf(
-  tibble(TSA_NUMBER_DESCRIPTION = "",
-         map_label = "",
-         OBJECTID = 0,
-         ID = 0,
-         lat = c(0,1),
-         lng = c(0,1)),
-  coords = c('lng','lat'),
-  crs = 4326)
-
-empty_polygon = st_set_geometry(
-  empty_polygon[1,],
-  st_bbox(empty_polygon) |>
-    st_as_sfc()
-)
-
-write_sf(empty_polygon,
-         'data/empty_poly.gpkg')
-
-# Testing how to summarise for each hexagon.
-library(data.table)
-subb_moist_pixels_dt = as.data.table(subb_moist_pixels |> st_drop_geometry())
-
-subb_moist_pixels_dt = subb_moist_pixels_dt[,lapply(.SD, \(x) sum(x)/.N), by = hex_ID, .SDcols = names(subb_moist_pixels_dt)[1:6]]
-
-ggplot() + geom_sf(data = hexagon_grid, aes(fill = den_perc))
-
-hexagons_with_values = hexagon_grid |>
-  dplyr::select(hex_ID,X,Y,bec_zone) |>
-  left_join(subb_moist_pixels_dt)
-
-ggplot() + geom_sf(data = hexagons_with_values, aes(fill = den))
-
-## TESTING ##
-# How big are the cutblocks? How many 1-hectare squares would fit inside?
-# Let's make the 1-hectare squares to fill whichever hexagons fit onto these cutblocks.
-pixels_for_cutblock = st_make_grid(x = cutblock, cellsize = units::set_units(10000, "m2"))
-
-pixels_for_1_hex = st_make_grid(x = hex_for_cutblock[1],cellsize = units::set_units(10000, "m2"))
-pixels_for_cutblock = st_set_geometry(tibble(placeholder = abs(rnorm(length(pixels_for_cutblock),
-                                                                 mean = 0.5,
-                                                                 sd = 0.1))), pixels_for_cutblock)
-
-hex_for_cutblock = hexagon_grid = st_make_grid(cutblock, square = F, cellsize = units::set_units(3e07, "m2"))
-
-ggplot() +
-  geom_sf(data = pixels_for_cutblock, aes(fill = placeholder)) +
-  geom_sf(data = cutblock, alpha = 0.6, fill = 'red') +
-  geom_sf(data = hex_for_cutblock, col = 'blue', alpha = 0.5, fill = 'transparent') +
-  scale_fill_distiller(palette = 'RdYlGn', direction = 1)
-
-
-
+} else {
+  subb_dry_r = rast('data/subb_dry_pixels.tif')
+  subb_moist_r = rast('data/subb_moist_pixels.tif')
+}
 
 

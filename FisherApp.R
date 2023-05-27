@@ -5,18 +5,20 @@ library(bslib)
 library(tidyverse)
 library(leaflet)
 library(data.table)
-library(Ryacas) # for the TeXForm command
+# library(Ryacas) # for the TeXForm command
+library(terra)
 
 
 source('modules/habitat_slider_module.R')
 
 # Habitat variable names as vector.
-habitat_varnames = tibble(real_name = c('den','branch',
-                                        'cwd','cav',
-                                        'active','open'),
-                          label_name = c('Denning','Branch Resting',
-                                         'CWD Resting','Cavity Resting',
-                                         'Active','Open (less than)'))
+habitat_varnames = tibble(real_name = c('denning','mov',
+                                        'cwd','rust',
+                                        'cavity','opn'),
+                          label_name = c('Denning','Movement',
+                                         'CWD Resting','Rust Resting',
+                                         'Cavity Resting',
+                                         'Open (less than)'))
 
 
 int_d2_slider_inputs = card(
@@ -30,7 +32,14 @@ int_d2_slider_inputs = card(
         h5("Percent"),
         style = 'text-align:center;font-weight:bold;font-size:large;'
       ),
-      NULL
+      # layout_column_wrap(
+      #   width = 1/2,
+        # numericInput('movp_input','Movp Input',min = 1, max = 5, value = 1),
+        radioButtons('population_input','Population',
+                    choices = c("SBS-moist" = "1","SBS-dry" = "2","dry forest" = "3","boreal" = "5"),
+                    inline = F,
+                    selected = '1')
+      # ),
     ),
     lapply(habitat_varnames$real_name, habitat_slider_module_ui)
   )
@@ -72,10 +81,11 @@ reset_selection_button = actionButton(
 )
 
 spat_ret_sidebar = sidebar(
-  h5("Spatial Retention Tool"),
+  h5("Home Range Visualization Tool"),
   fileInput(inputId = 'user_shapefile',
-            label = 'Upload Proposed Cutblock Shapefile',
+            label = HTML('Upload Potential Habitat Alteration<br>(.zip file of shapefile, or .gpkg)'),
             accept = c(".zip",".gpkg")),
+  HTML("<br>"),
   selectInput(inputId = 'variable_for_leaflet',
               label = 'Habitat Type to Visualize',
               choices = c('Denning' = 'den',
@@ -86,10 +96,11 @@ spat_ret_sidebar = sidebar(
                           'Open (less than)' = 'open'),
               selectize = F
   ),
+  HTML("<br>"),
   reset_selection_button
 )
 
-spat_ret_nav = nav(title = 'Spatial Retention Tool',
+spat_ret_nav = nav(title = 'Home Range Visualization Tool',
                    layout_sidebar(
                      sidebar = spat_ret_sidebar,
                      card(
@@ -109,7 +120,8 @@ my_theme = bs_theme(bootswatch = 'flatly',
 
 
 ui <- bslib::page_navbar(
-  selected = 'Spatial Retention Tool',
+  # selected = 'Home Range Visualization Tool',
+  selected = 'Interactive D2 Demonstration',
   theme = my_theme,
   # withMathJax(),
   title = 'Fisher Tool',
@@ -118,6 +130,9 @@ ui <- bslib::page_navbar(
 )
 
 server <- function(input, output, session) {
+
+  # --------------------------------------------------------------
+  # Nav 1: Interactive D2 Demonstration
 
   # if(!str_detect(getwd(),'www$')) setwd(paste0(getwd(),'/www/'))
 
@@ -139,20 +154,63 @@ server <- function(input, output, session) {
   # stopifnot(mahalanobis(value_matrix(), 0, diag(ncol(value_matrix()))) == rowSums(x*x))
   ##- Here, D^2 = usual squared Euclidean distances
 
-  D2 <- reactive({
-    values = value_matrix()
+  # D2 <- reactive({
+  #   values = value_matrix()
+  #
+  #   results = mahalanobis(
+  #     values,
+  #     colMeans(values),
+  #     var(c(0.6,0.5,0.6,0.7,0.4,0.6,0.5))
+  #   )
+  #
+  #   return(results)
+  # })
 
-    results = mahalanobis(
-      values,
-      colMeans(values),
-      var(c(0.6,0.5,0.6,0.7,0.4,0.6,0.5))
-    )
+  # Set up the covariance matrix (these values come from Rich Weir, before he retired!)
+  # Note that columns are: 'den','active','cwd','rust','cav', and 'open'
+  # Note also that rows are: 1: SBS-moist, 2: SBS-dry, 3: dry forest, 5: boreal
+  # Not sure why there is a 4th row... curious.
+  fisher_covariance_matrix = list(matrix(c(0.536,	2.742,	0.603,	3.211,	-2.735,	1.816,	2.742,	82.721,	4.877,	83.281,	7.046,	-21.269,	0.603,	4.877,	0.872,	4.033,	-0.67,	-0.569,	3.211,	83.281,	4.033,	101.315,	-15.394,	-1.31,	-2.735,	7.046,	-0.67,	-15.394,	56.888,	-48.228,	1.816,	-21.269,	-0.569,	-1.31,	-48.228,	47.963), ncol =6, nrow =6),
+                          matrix(c(0.525,	-1.909,	-0.143,	2.826,	-6.891,	3.264,	-1.909,	96.766,	-0.715,	-39.021,	69.711,	-51.688,	-0.143,	-0.715,	0.209,	-0.267,	1.983,	-0.176,	2.826,	-39.021,	-0.267,	58.108,	-21.928,	22.234,	-6.891,	69.711,	1.983,	-21.928,	180.113,	-96.369,	3.264,	-51.688,	-0.176,	22.234,	-96.369,	68.499), ncol =6, nrow =6),
+                          matrix(c(2.905,	0.478,	4.04,	1.568,	-3.89,	0.478,	0.683,	6.131,	8.055,	-8.04,	4.04,	6.131,	62.64,	73.82,	-62.447,	1.568,	8.055,	73.82,	126.953,	-130.153,	-3.89,	-8.04,	-62.447,	-130.153,	197.783), ncol=5, nrow=5),
+                          matrix(c(193.235,	5.418,	42.139,	125.177,	-117.128,	5.418,	0.423,	2.926,	5.229,	-4.498,	42.139,	2.926,	36.03,	46.52,	-42.571,	125.177,	5.229,	46.52,	131.377,	-101.195,	-117.128,	-4.498,	-42.571,	-101.195,	105.054), ncol =5, nrow =5))
 
-    return(results)
-  })
+
+  D2 = reactive({
+    # Set up a data.table with values.
+    browser()
+    values = as.data.frame(value_matrix()) |>
+      mutate(names = c('denning','mov',
+                       'cwd','rust',
+                       'cavity','opn')) |>
+      add_row(V1 = as.numeric(input$population_input), names = 'movp')
+
+    values = pivot_wider(values, names_from = names, values_from = V1)
+    values = as.data.table(values)
+    # First, make sure habitat types are as a percentage of the total possible hectares, i.e. 3000
+
+    # Implement some adjustments based on a mystical column 'movp'. These are all based
+    # on knowledge inside Rich Weir and others' heads. It is not for us to understand!!
+    values[ movp == 1 & denning >= 0, denning:=log(denning + 1)][ movp == 1 & cavity >= 0, cavity:=log(cavity + 1)]
+    values[ movp == 2 & denning >= 0, denning:=log(denning + 1)]
+    values[ movp >= 3 & rust >= 0, rust:=log(rust + 1)]
+
+    values[ movp == 1 & denning > 1.57 , denning := 1.57 ][ movp == 1 & rust > 36.2, rust :=36.2][ movp == 1 & cavity > 0.685 , cavity :=0.685][ movp == 1 & cwd > 30.38, cwd :=30.38][ movp == 1 & mov > 61.5, mov :=61.5][ movp == 1 & opn < 32.7, opn :=32.7]
+    values[ movp == 2 & denning > 1.16, denning := 1.16][ movp == 2 & rust > 19.1, rust :=19.1][ movp == 2 & cavity > 0.45 , cavity :=0.45][ movp == 2 & cwd > 12.7, cwd :=12.7][movp == 2 & mov > 51.3, mov :=51.3][ movp == 2 & opn < 37.3, opn :=37.3]
+    values[ movp == 3 & denning > 2.3, denning := 2.3][ movp == 3 & rust > 1.6, rust :=1.6][ movp == 3 & cwd > 10.8, cwd :=10.8][ movp == 3 & mov > 58.1, mov := 58.1][ movp == 3 & opn < 15.58, opn := 15.58]
+    values[ movp == 5 & denning > 24 , denning:=24 ][ movp ==5 & rust > 2.2, rust :=2.2][ movp ==5 & cwd > 17.4 , cwd :=17.4][ movp ==5 & mov > 56.2, mov :=56.2][ movp == 5 & opn < 31.2, opn := 31.2]
+
+    values[ movp == 1, d2:= mahalanobis(values[ movp == 1, c("denning", "rust", "cavity", "cwd", "mov", "opn")], c(1.57, 36.2, 0.68, 30.38, 61.5, 32.72), cov = fisher_covariance_matrix[[1]])]
+    values[ movp == 2, d2:= mahalanobis(values[ movp == 2, c("denning", "rust", "cavity", "cwd", "mov", "opn")], c(1.16, 19.1, 0.4549, 12.76, 51.25, 37.27), cov = fisher_covariance_matrix[[2]])]
+    values[ movp == 3, d2:= mahalanobis(values[ movp == 3, c("denning", "rust", "cwd", "mov", "opn")], c(2.31, 1.63, 10.8, 58.1, 15.58), cov = fisher_covariance_matrix[[3]])]
+    values[ movp == 5, d2:= mahalanobis(values[ movp == 5, c("denning", "rust", "cwd", "mov", "opn")], c(23.98, 2.24, 17.4, 56.2, 31.2), cov = fisher_covariance_matrix[[4]])]
+    values[ denning < 0.001, d2:= NA][mov < 0.001,  d2:= NA][cwd  < 0.001,  d2 := NA][rust  < 0.001,  d2 := NA]
+
+    return(as.data.frame(values))
+      })
 
   output$mean_D2 = renderText({
-    d2_values = D2()
+    d2_values = D2()$d2
     return(
       paste0("D2 Result: ",round(mean(d2_values),3))
     )})
@@ -163,87 +221,281 @@ server <- function(input, output, session) {
   # Load in generated data.
   bc = bcmaps::bc_bound() |> st_transform(crs = 4326)
 
-  # BEC Zones (n = 3) - first level of selection in leaflet map.
-  subb_dry = read_sf('data/sub_boreal_dry.gpkg') |>
+  # Probably unnecessary once the app is published...
+  if(!str_detect(getwd(),".*www$")){
+    setwd(paste0(getwd(),"/www"))
+  }
+
+  # BEC Zones (n = 2) - first level of selection in leaflet map.
+  subb_dry = read_sf('sub_boreal_dry.gpkg') |>
     st_transform(crs = 4326)
 
-  subb_moist = read_sf('data/sub_boreal_moist.gpkg') |>
+  subb_moist = read_sf('sub_boreal_moist.gpkg') |>
     st_transform(crs = 4326)
 
-  # boreal = read_sf('data/boreal.gpkg') |>
-  #   st_transform(crs = 4326)
+  bec_zones = bind_rows(subb_dry, subb_moist)
 
-  bec_zones = bind_rows(subb_dry, subb_moist) #|>
-    # bind_rows(boreal)
+  # TSAs that overlap with the BEC zones.
+  tsa = read_sf('tsa_polygons_in_bec_zones.gpkg') |>
+    st_transform(crs = 4326) |>
+    mutate(map_label = TSA_NUMBER_DESCRIPTION,
+           OBJECTID = TSA_NUMBER)
+
+  # # Rasters of 1-hectare pixels.
+  # subb_dry_r = rast('data/subb_dry_pixels.tif')
+  # subb_moist_r = rast('data/subb_moist_pixels.tif')
+  dat_r = rast('megaraster.tif')
+
+  # Hexagons a la Kyle Lochhead
+  hexagons = read_sf('feta_hex_simplified.gpkg')
+
+  # Reactive: user's uploaded shapefile.
+  user_file = reactive({
+
+    user_file = input$user_shapefile
+    if(is.null(user_file)) return(read_sf('empty_poly.gpkg'))
+
+    #If it's a geopackage, read it in directly.
+    if(str_detect(user_file$datapath, ".gpkg")){
+      userpoly = read_sf(user_file$datapath) %>%
+        st_transform(crs = 4326) |>
+        summarise()
+
+      userpoly
+    }
+
+    #If it's a zipped shapefile, unzip then read in.
+    if(str_detect(user_file$datapath, ".zip")){
+
+      filelist <- unzip(user_file$datapath)
+      userpoly = read_sf(filelist[str_detect(filelist, ".shp")]) %>%
+        st_transform(crs = 4326)
+
+      userpoly
+    }
+    return(userpoly |> mutate(map_label = 'Uploaded Polygons'))
+  })
 
   # Reactive: TSA polygons in selected BEC zone.
   tsa_polys = reactive({
-    if(selected_bec() == 'nothing' | current_scale() == 'bec_zones'){
-      dat = read_sf('data/empty_poly.gpkg')
+    if(selected_bec() == 'nothing'){ #| current_scale() != 'hexagons'){
+      dat = read_sf('empty_poly.gpkg')
     } else {
-      if(selected_bec() == 'sub-boreal dry'){
-        dat = read_sf('data/tsa_polygons_in_subb_dry.gpkg')
-      }
-      if(selected_bec() == 'sub-boreal moist'){
-        dat = read_sf('data/tsa_polygons_in_subb_moist.gpkg')
-      }
-      if(selected_bec() == 'boreal'){
-        dat = read_sf('data/tsa_polygons_in_boreal.gpkg')
-      }
+
+      dat = tsa
+
       if(current_scale() == 'hexagons'){
-        dat = dat[dat$OBJECTID == selected_tsa(),]
+        dat = dat[dat$TSA_NUMBER == selected_tsa(),]
       }
     }
     return(dat)
   })
 
   # Reactive: hexagons in selected TSA.
+  # Note: if User has uploaded a spatial object, limit hexagons to
+  # just those hexagons that spatially overlap with the uploaded spatial object.
   hexagons_in_tsa = reactive({
+
     if(selected_tsa() == 'nothing' | current_scale() == 'bec_zones'){
-      dat = read_sf('data/empty_poly.gpkg')
+      dat = read_sf('empty_poly.gpkg')
     } else {
-      if(selected_tsa() != 'nothing' & selected_bec() == 'sub-boreal dry'){
-        dat = read_sf('data/hexagons_subb_dry.gpkg') |>
+      if(selected_tsa() != 'nothing'){
+        dat = hexagons |>
           st_transform(crs = 4326) |>
-          filter(tsa_obj_id %in% selected_tsa())
+          st_join(tsa_polys() |>
+                    filter(TSA_NUMBER == selected_tsa()) |>
+                    dplyr::select(TSA_NUMBER),
+                  st_intersects) |>
+          filter(!is.na(TSA_NUMBER))
+          # filter(tsa_obj_id %in% selected_tsa())
       }
-      if(selected_tsa() != 'nothing' & selected_bec() == 'sub-boreal moist'){
-        dat = read_sf('data/hexagons_subb_moist.gpkg') |>
-          st_transform(crs = 4326) |>
-          filter(tsa_obj_id %in% selected_tsa())
-      }
-      if(selected_tsa() != 'nothing' & selected_bec() == 'boreal'){
-        dat = read_sf('data/hexagons_boreal.gpkg') |>
-          st_transform(crs = 4326) |>
-          filter(tsa_obj_id %in% selected_tsa())
-      }
+      # if(selected_tsa() != 'nothing' & selected_bec() == 'sub-boreal moist'){
+      #   dat = read_sf('data/hexagons_subb_moist.gpkg') |>
+      #     st_transform(crs = 4326) |>
+      #     filter(tsa_obj_id %in% selected_tsa())
+      # }
+    }
+
+    #Has user uploaded file? If so, clip hexagons here.
+    if(user_file()$map_label == 'Uploaded Polygons'){
+      dat = dat |>
+        st_join(user_file() |> dplyr::mutate(is_in_user_file = T), st_intersects) |>
+        filter(!is.na(is_in_user_file) | ID == 0) |>
+        dplyr::select(-is_in_user_file)
     }
     return(dat)
   })
 
-  # Reactive: pixels in selected hexagon(s).
-  pixels_in_hex = reactive({
-    if(sum(str_detect(selected_hex(), 'nothing')) > 0 | current_scale() == 'bec_zones'){
-      dat = read_sf('data/empty_poly.gpkg') |>
-        mutate(hex_ID = 0, den = 0)
+  # Reactive summarized value for selected hexagons
+  hexagons_with_values = reactive({
+
+    # req(hexagons_in_tsa()$map_label != "")
+
+    # Filter down object of all hexagons in TSA to just our selected list.
+    choice_hexes = hexagons_in_tsa() |>
+      filter(!duplicated(ID))
+
+    hexes_to_summarise = choice_hexes$ID
+
+    if('TSA_NUMBER' %in% names(choice_hexes)){
+    # shiny Feedback!
+      withProgress(message = 'Summarizing 1-hectare cell values...', {
+
+        incProgress(0.2,
+                    message = 'Please wait 30+ seconds, depending on size of selected TSA...')
+        # Pull out raster pixel values for our list of chosen hexagons.
+        extracted_data = terra::extract(dat_r,
+                                        st_transform(choice_hexes,
+                                                     crs = 3005)
+                                        )
+        # The extracted data needs to have an ID column that lines up with
+        # the hexagon spatial object's ID column. Add that in here.
+        extracted_data = extracted_data |>
+          left_join(
+            choice_hexes |>
+              mutate(hex_ID = ID) |>
+              mutate(ID = row_number()) |>
+              dplyr::select(ID,hex_ID) |> st_drop_geometry()
+          ) |>
+          mutate(ID = hex_ID) |>
+          dplyr::select(ID,denning:movp)
+
+        # # We lose the geometry here, need to read it to the table as official geometry.
+        # extracted_data = st_set_geometry(extracted_data, extracted_data$geom)
+
+        # If the user has uploaded a spatial file,
+        # update raster pixel values for those areas
+        # (we assume these would reduce habitat quality from 1 to 0 for simplicity's sake.
+        if(user_file()$map_label != ''){
+          clipped_choice_hexes = st_intersection(choice_hexes,
+                                                 st_transform(user_file(),
+                                                             crs = 4326))
+
+          pixel_value_updater = terra::extract(dat_r,
+                                               st_transform(clipped_choice_hexes,
+                                                            crs = 3005))
+
+          pixel_value_updater = pixel_value_updater |>
+            left_join(
+              clipped_choice_hexes |>
+                mutate(hex_ID = ID) |>
+                mutate(ID = row_number()) |>
+                dplyr::select(ID,hex_ID) |>
+                st_drop_geometry()
+            ) |>
+            mutate(ID = hex_ID) |>
+            dplyr::select(ID,denning:movp) |>
+            mutate(across(denning:movp, ~ 0))
+
+          # Overwrite a number of rows of the extracted data to 0 for habitat
+          # types. The number of rows depends on the number of rows in
+          # the 'pixel_value_updater' object.
+
+          for(unique_id in unique(pixel_value_updater$ID)){
+            hexagon_subset_extracted_data = extracted_data[extracted_data$ID == unique_id,]
+
+            hexagon_subset_extracted_data[1:nrow(pixel_value_updater[pixel_value_updater$ID == unique_id,]),c(2:7)] = 0
+
+            extracted_data = bind_rows(
+              extracted_data[extracted_data$ID != unique_id,],
+              hexagon_subset_extracted_data
+            )
+          }
+
+        } else {
+        }
+
+        # colnames(extracted_data)[1] <- 'ID'
+
+        # Drop pixels that fall outside the home-range of any of
+        # the 4 fisher populations (these have a movp value of 0)
+        # extracted_data = extracted_data |> filter(movp != 0)
+
+        # If there are multiple population home-ranges in a hexagon,
+        # change all non-0 populations to whatever the majority
+        # is in that hexagon.
+        hex_population_count = extracted_data |>
+          count(ID,movp) |>
+          group_by(ID) |>
+          arrange(desc(n)) |>
+          slice(1) |>
+          ungroup() |>
+          dplyr::rename(movp_corrector = movp) |>
+          dplyr::select(ID,movp_corrector)
+
+        extracted_data = extracted_data |>
+          left_join(hex_population_count) |>
+          mutate(movp = movp_corrector)
+
+        extracted_data = as.data.table(extracted_data)
+
+        # Get proportion of 3000 potential hectares for each
+        # habitat type. Do this for each chosen hexagon ID separately,
+        # and also for each different population (i.e. 'movp').
+
+        extracted_data = extracted_data[,lapply(.SD, \(x) sum(x,na.rm=T)/3000),
+                                        by = .(ID,movp)]
+
+        ### RESUME HERE ###
+        ### start using Kyle's hexagons. That should clear up
+        ### duplication of 'movp', as well as 'movp' values of 0.
+        incProgress(1/2,
+                    message = 'Finished extracting values.')
+
+        # extracted_data = as_tibble(extracted_data)
+
+        # values = distinct(extracted_data)
+
+        #Calculate the Mahalanobis D2 for each hexagon.
+        # Make sure variables are in this order:
+        # 'denning','mov',
+        # 'cwd','rust',
+        # 'cavity','opn'
+
+        # Implement some adjustments based on a mystical column 'movp'. These are all based
+        # on knowledge inside Rich Weir and others' heads. It is not for us to understand!!
+        extracted_data[ movp == 1 & denning >= 0, denning:=log(denning + 1)][ movp == 1 & cavity >= 0, cavity:=log(cavity + 1)]
+        extracted_data[ movp == 2 & denning >= 0, denning:=log(denning + 1)]
+        extracted_data[ movp >= 3 & rust >= 0, rust:=log(rust + 1)]
+
+        extracted_data[ movp == 1 & denning > 1.57 , denning := 1.57 ][ movp == 1 & rust > 36.2, rust :=36.2][ movp == 1 & cavity > 0.685 , cavity :=0.685][ movp == 1 & cwd > 30.38, cwd :=30.38][ movp == 1 & mov > 61.5, mov :=61.5][ movp == 1 & opn < 32.7, opn :=32.7]
+        extracted_data[ movp == 2 & denning > 1.16, denning := 1.16][ movp == 2 & rust > 19.1, rust :=19.1][ movp == 2 & cavity > 0.45 , cavity :=0.45][ movp == 2 & cwd > 12.7, cwd :=12.7][movp == 2 & mov > 51.3, mov :=51.3][ movp == 2 & opn < 37.3, opn :=37.3]
+        extracted_data[ movp == 3 & denning > 2.3, denning := 2.3][ movp == 3 & rust > 1.6, rust :=1.6][ movp == 3 & cwd > 10.8, cwd :=10.8][ movp == 3 & mov > 58.1, mov := 58.1][ movp == 3 & opn < 15.58, opn := 15.58]
+        extracted_data[ movp == 5 & denning > 24 , denning:=24 ][ movp ==5 & rust > 2.2, rust :=2.2][ movp ==5 & cwd > 17.4 , cwd :=17.4][ movp ==5 & mov > 56.2, mov :=56.2][ movp == 5 & opn < 31.2, opn := 31.2]
+
+        extracted_data[ movp == 1, d2:= mahalanobis(extracted_data[ movp == 1, c("denning", "rust", "cavity", "cwd", "mov", "opn")], c(1.57, 36.2, 0.68, 30.38, 61.5, 32.72), cov = fisher_covariance_matrix[[1]])]
+        extracted_data[ movp == 2, d2:= mahalanobis(extracted_data[ movp == 2, c("denning", "rust", "cavity", "cwd", "mov", "opn")], c(1.16, 19.1, 0.4549, 12.76, 51.25, 37.27), cov = fisher_covariance_matrix[[2]])]
+        extracted_data[ movp == 3, d2:= mahalanobis(extracted_data[ movp == 3, c("denning", "rust", "cwd", "mov", "opn")], c(2.31, 1.63, 10.8, 58.1, 15.58), cov = fisher_covariance_matrix[[3]])]
+        extracted_data[ movp == 5, d2:= mahalanobis(extracted_data[ movp == 5, c("denning", "rust", "cwd", "mov", "opn")], c(23.98, 2.24, 17.4, 56.2, 31.2), cov = fisher_covariance_matrix[[4]])]
+        extracted_data[ denning < 0.001, d2:= NA][mov < 0.001,  d2:= NA][cwd  < 0.001,  d2 := NA][rust  < 0.001,  d2 := NA]
+
+        hexagon_values = as.data.frame(extracted_data)
+
+        # If a given hexagon has a portion that is 0 for movp (i.e.
+        # there's no population homerange there), as well as another
+        # portion that is non-0 for movp, drop the 0 part!
+        hexagon_values = hexagon_values |>
+          group_by(ID) |>
+          mutate(result_rows = n()) |>
+          ungroup() |>
+          filter(movp != 0 | result_rows == 1)
+
+        # hexagon_values = hexagon_values |> filter(!is.na(d2))
+
+        output = st_set_geometry(
+          hexagon_values,
+          st_geometry(choice_hexes)
+        )
+      })
     } else {
-      if(sum(str_detect(selected_hex(), 'nothing')) == 0 & selected_bec() == 'sub-boreal dry'){
-        dat = read_sf('data/subb_dry_pixels.gpkg') |>
-          st_transform(crs = 4326) |>
-          filter(hex_ID %in% selected_hex())
-      }
-      if(sum(str_detect(selected_hex(), 'nothing')) == 0 & selected_bec() == 'sub-boreal moist'){
-        dat = read_sf('data/subb_moist_pixels.gpkg') |>
-          st_transform(crs = 4326) |>
-          filter(hex_ID %in% selected_hex())
-      }
-      if(sum(str_detect(selected_hex(), 'nothing')) == 0 & selected_bec() == 'boreal'){
-        dat = read_sf('data/boreal_pixels.gpkg') |>
-          st_transform(crs = 4326) |>
-          filter(hex_ID %in% selected_hex())
-      }
+      output = st_set_geometry(
+        tibble(a = 0) |>
+          mutate(hex_ID = 0),
+        st_geometry(choice_hexes)
+      )
     }
-    return(dat)
+
+    return(output)
   })
 
   # Reactive Values used in leaflet click selection events.
@@ -251,7 +503,7 @@ server <- function(input, output, session) {
 
   selected_tsa = reactiveVal('nothing')
 
-  selected_hex = reactiveVal('nothing')
+  # selected_hex = reactiveVal('nothing')
 
   current_scale = reactiveVal('bec_zones')
 
@@ -261,48 +513,53 @@ server <- function(input, output, session) {
     current_scale('bec_zones')
     selected_bec('nothing')
     selected_tsa('nothing')
-    selected_hex('nothing')
+    # selected_hex('nothing')
   })
 
   current_zoom = reactive({
-    if(current_scale() == 'bec_zones'){
+    if(user_file()$map_label != ''){
+      my_zoom = list(lng = st_centroid(user_file())$geom[[1]][1],
+                     lat = st_centroid(user_file())$geom[[1]][2],
+                     zoom = 10)
+    }
+    if(current_scale() == 'bec_zones' & user_file()$map_label == ''){
       my_zoom = list(lng = -126, lat = 54.58419, zoom = 5)
     }
-    if(current_scale() == 'TSA'){
+    if(current_scale() == 'TSA' & user_file()$map_label == ''){
       bec_zone_centroid = st_centroid(bec_zones[bec_zones$bec_zone == selected_bec(),])
 
       my_zoom = list(lng = bec_zone_centroid$geom[[1]][1],
                      lat = bec_zone_centroid$geom[[1]][2],
                      zoom = 6)
     }
-    if(current_scale() == 'hexagons' & sum(str_detect(selected_hex(), 'nothing')) > 0){
+    if(current_scale() == 'hexagons' & user_file()$map_label == ''){
       tsa_centroid = st_centroid(tsa_polys()[tsa_polys()$OBJECTID == selected_tsa(),])
 
       my_zoom = list(lng = tsa_centroid$geom[[1]][1],
                      lat = tsa_centroid$geom[[1]][2],
                      zoom = 7)
     }
-    if(sum(str_detect(selected_hex(), 'nothing')) == 0){
-      hex_centroid = st_centroid(hexagons_in_tsa()[hexagons_in_tsa()$ID %in% selected_hex(),])
-
-      my_zoom = list(lng = hex_centroid$geom[[1]][1],
-                     lat = hex_centroid$geom[[1]][2],
-                     zoom = 10)
-    }
+    # if(){
+    #   hex_centroid = st_centroid(hexagons_in_tsa()[hexagons_in_tsa()$ID %in% selected_hex(),])
+    #
+    #   my_zoom = list(lng = hex_centroid$geom[[1]][1],
+    #                  lat = hex_centroid$geom[[1]][2],
+    #                  zoom = 10)
+    # }
     return(my_zoom)
   })
 
   observeEvent(input$myleaf_shape_click, {
-    # Are we on to the hexagon selection scale? If so, grab shape id.
+    # # Are we on to the hexagon selection scale? If so, grab shape id.
     if(current_scale() == 'hexagons'){
-      # Have we already selected one hexagon? If so, add on the new ID.
-      if(sum(str_detect(selected_hex(), 'nothing')) == 0){
-        new_hex_selection = c(selected_hex(), input$myleaf_shape_click$id)
-        selected_hex(unique(new_hex_selection[new_hex_selection != 'no_selection']))
-      } else {
-        selected_hex(input$myleaf_shape_click$id)
-      }
-      # current_scale('pixels')
+      # # Have we already selected one hexagon? If so, add on the new ID.
+      # if(sum(str_detect(selected_hex(), 'nothing')) == 0){
+      #   new_hex_selection = c(selected_hex(), input$myleaf_shape_click$id)
+      #   selected_hex(unique(new_hex_selection[new_hex_selection != 'no_selection']))
+      # } else {
+      #   selected_hex(input$myleaf_shape_click$id)
+      # }
+      # # current_scale('pixels')
     }
     # Are we on to the TSA selection scale? If so, grab shape id.
     if(current_scale() == 'TSA'){
@@ -325,15 +582,12 @@ server <- function(input, output, session) {
     palette = 'Dark2',
     domain = bec_zones$bec_zone)
 
-  pixel_pal = leaflet::colorFactor(
-    palette = 'Set1',
-    domain = c(0,1),
-    reverse = F
+  hex_pal = leaflet::colorNumeric(
+    palette = 'Spectral',
+    domain = c(0, 1000),
+    reverse = T,
+    na.color = 'grey'
   )
-
-  # output$test_dt = DT::renderDT({
-  #   pixels_in_hex() |> filter(duplicated(ID))
-  # })
 
   output$myleaf = renderLeaflet({
     leaflet() |>
@@ -344,71 +598,50 @@ server <- function(input, output, session) {
                   weight = 1,
                   fillColor = ~bec_zone_pal(bec_zone),
                   data = bec_zones) |>
-      addLegend(pal = pixel_pal, values = c(0,1))
+      addLegend(pal = hex_pal, values = c(0,1000))
   })
 
   observe({
     leafletProxy('myleaf') |>
       clearGroup('selected_tsas') |>
-      clearGroup('selected_hexagons') |>
-      clearGroup('pixels_in_selection') |>
+      clearGroup('hexagons') |>
       addPolygons(
         layerId = ~OBJECTID,
         color = 'darkgreen',
         weight = 2,
         fillColor = 'darkgreen',
-        opacity = 0.5,
+        opacity = ifelse(current_scale() == 'TSA', 0.5,0.05),
         label = ~map_label,
         data = tsa_polys(),
         group = 'selected_tsas'
       ) |>
       addPolygons(
-        layerId = ~ID,
+        # layerId = ~hex_ID,
         color = 'black',
         weight = 1,
-        fillColor = 'purple',
-        fillOpacity = 0.3,
-        data = hexagons_in_tsa(),
-        group = 'selected_hexagons'
+        # label = hexagons_with_values()[[chosen_variable()]],
+        label = hexagons_with_values()$d2,
+        fillColor = ~hex_pal(hexagons_with_values()$d2),
+        fillOpacity = 0.5,
+        data = hexagons_with_values(),
+        group = 'hexagons'
       ) |>
       addPolygons(
-        layerId = ~ID,
-        color = 'black',
+        color = 'orange',
         weight = 1,
-        fillColor = pixel_pal(pixels_in_hex()[[chosen_variable()]]),
-        fillOpacity = 0.8,
-        # label = ~ paste0(chosen_variable(),": ",pixels_in_hex()[[chosen_variable()]]),
-        data = pixels_in_hex(),
-        group = 'pixels_in_selection'
+        fillColor = 'red',
+        fillOpacity = 0.5,
+        data = user_file()
       ) |>
       setView(lng = current_zoom()$lng,
               lat = current_zoom()$lat,
               zoom = current_zoom()$zoom)
-    #     # clearGroup(group = 'hexagons_with_values') |>
-    #     # addPolygons(
-    #     #   fillColor = 'grey',#~ my_fill_pal()(var_to_display),
-    #     #   fillOpacity = 0.8,
-    #     #   col = 'black',
-    #     #   weight = 3,
-    #     #   data = hex_data_var_chosen(),
-    #     #   group = 'hexagons_with_values'
-    #     # )
   })
 
   output$data_test = DT::renderDT({
     hex_data_var_chosen()
   })
-  # bc_grid = sf::st_as_sf(
-  #   sf::st_make_grid(x = bcmaps::bc_bound() |> st_transform(crs = 4326),
-  #                    n = c(10,10))
-  # ) |> terra::rast()
-  #
-  # bc_grid$D2 = D2
-  #
-  # bc_sf = bc_grid |>
-  #   as.data.frame(xy = TRUE)
-  #
-  # ggplot() + geom_raster(data = bc_sf, aes(x = x, y = y, fill = D2))
+
 }
 
 shinyApp(ui, server)

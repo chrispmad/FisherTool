@@ -3,13 +3,13 @@ habitat_slider_module_ui <- function(id) {
   # card(
   layout_column_wrap(
     width = 1/2,
-      layout_column_wrap(width = 1/3,
-                         div(textOutput(ns('this_variable')),
-                             style = 'margin-top: 30px; text-align:center; font-size:medium;'),
-                         div(uiOutput(ns('ha_value_ui')), style = 'margin-top: 10px; text-align:center;'),
-                         div(textOutput(ns('percent_value')),
-                             style = 'margin-top: 30px; text-align:center; font-size:large;')
-      ),
+    layout_column_wrap(width = 1/3,
+                       div(textOutput(ns('this_variable')),
+                           style = 'margin-top: 30px; text-align:center; font-size:medium;'),
+                       div(uiOutput(ns('ha_value_ui')), style = 'margin-top: 10px; text-align:center;'),
+                       div(textOutput(ns('percent_value')),
+                           style = 'margin-top: 30px; text-align:center; font-size:large;')
+    ),
     div(
       sliderInput(inputId = ns(id), label = '',
                   sep = '',
@@ -55,11 +55,15 @@ habitat_slider_module_server <- function(id, name_df) {
 
       # state updates the out of sync UI elements
       observeEvent(state$chosen_value, {
-        if (!identical(input[[id]], state$chosen_value)) {
-          updateNumericInput(session, id, value = state$chosen_value)
-        }
-        if (!identical(input$ha_value, state$chosen_value)) {
-          updateSliderInput(session, "ha_value", value = state$chosen_value)
+        # But only if state is not currently NULL, which indicates
+        # we have just loaded the tab/page.
+        if(!is.null(state$chosen_value)){
+          if (!identical(input[[id]], state$chosen_value)) {
+            updateNumericInput(session, id, value = state$chosen_value)
+          }
+          if (!identical(input$ha_value, state$chosen_value)) {
+            updateSliderInput(session, "ha_value", value = state$chosen_value)
+          }
         }
       })
 
