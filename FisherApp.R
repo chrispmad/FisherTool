@@ -35,9 +35,9 @@ int_d2_slider_inputs = card(
       # layout_column_wrap(
       #   width = 1/2,
         # numericInput('movp_input','Movp Input',min = 1, max = 5, value = 1),
-        radioButtons('population_input','Population',
+        radioButtons('population_input',h5('Population'),
                     choices = c("SBS-moist" = "1","SBS-dry" = "2","dry forest" = "3","boreal" = "5"),
-                    inline = F,
+                    inline = T,
                     selected = '1')
       # ),
     ),
@@ -47,7 +47,19 @@ int_d2_slider_inputs = card(
 
 int_d2_sidebar = sidebar(
   width = '60%',
-  h3("Per 3000 hectare hexagon", style = 'text-align:center;'),
+  fluidRow(
+    column(
+      width = 8,
+      h3("Per 3000 hectare hexagon", style = 'text-align:center;')
+    ),
+    column(
+      width = 4,
+      actionButton(
+        'set_ideal_values',
+        'Set Ideal Values'
+      )
+    )
+  ),
   int_d2_slider_inputs
 )
 
@@ -85,18 +97,19 @@ spat_ret_sidebar = sidebar(
   fileInput(inputId = 'user_shapefile',
             label = HTML('Upload Potential Habitat Alteration<br>(.zip file of shapefile, or .gpkg)'),
             accept = c(".zip",".gpkg")),
+  actionButton('reset', 'Clear Uploaded Shape(s)'),
   HTML("<br>"),
-  selectInput(inputId = 'variable_for_leaflet',
-              label = 'Habitat Type to Visualize',
-              choices = c('Denning' = 'den',
-                          'Branch Resting' = 'branch',
-                          'CWD Resting' = 'cwd',
-                          'Cavity Resting' = 'cav',
-                          'Active' = 'active',
-                          'Open (less than)' = 'open'),
-              selectize = F
-  ),
-  HTML("<br>"),
+  # selectInput(inputId = 'variable_for_leaflet',
+  #             label = 'Habitat Type to Visualize',
+  #             choices = c('Denning' = 'den',
+  #                         'Branch Resting' = 'branch',
+  #                         'CWD Resting' = 'cwd',
+  #                         'Cavity Resting' = 'cav',
+  #                         'Active' = 'active',
+  #                         'Open (less than)' = 'open'),
+  #             selectize = F
+  # ),
+  # HTML("<br>"),
   reset_selection_button
 )
 
@@ -139,7 +152,7 @@ server <- function(input, output, session) {
   # Make a label/numeric input/slider combo for each variable name.
   variable_values = lapply(habitat_varnames$real_name, \(x) habitat_slider_module_server(x, habitat_varnames))
 
-  require(graphics)
+  # require(graphics)
 
   value_matrix <- reactive({
     return(
@@ -151,20 +164,25 @@ server <- function(input, output, session) {
       )
     )
   })
-  # stopifnot(mahalanobis(value_matrix(), 0, diag(ncol(value_matrix()))) == rowSums(x*x))
-  ##- Here, D^2 = usual squared Euclidean distances
 
-  # D2 <- reactive({
-  #   values = value_matrix()
-  #
-  #   results = mahalanobis(
-  #     values,
-  #     colMeans(values),
-  #     var(c(0.6,0.5,0.6,0.7,0.4,0.6,0.5))
-  #   )
-  #
-  #   return(results)
-  # })
+  # default values that minimize D2 (from my own experimentation)
+  default_values = tibble(movp = c(1,2,3,5),
+                          denning = c(200),
+                          mov = c(1600,1600,1700,1600),
+                          cwd = c(900),
+                          rust = c(1000),
+                          cav = c(600),
+                          opn = c(1200,1200,700,1200))
+
+  # Respond to 'set default' button
+  observeEvent(input$set_ideal_values, {
+      updateNumericInput(inputId = 'mov-mov', value = default_values[default_values$movp == as.numeric(input$population_input),]$mov)
+      updateNumericInput(inputId = 'denning-denning', value = default_values[default_values$movp == as.numeric(input$population_input),]$denning)
+      updateNumericInput(inputId = 'cwd-cwd', value = default_values[default_values$movp == as.numeric(input$population_input),]$cwd)
+      updateNumericInput(inputId = 'rust-rust', value = default_values[default_values$movp == as.numeric(input$population_input),]$rust)
+      updateNumericInput(inputId = 'cavity-cavity', value = default_values[default_values$movp == as.numeric(input$population_input),]$cav)
+      updateNumericInput(inputId = 'opn-opn', value = default_values[default_values$movp == as.numeric(input$population_input),]$opn)
+  })
 
   # Set up the covariance matrix (these values come from Rich Weir, before he retired!)
   # Note that columns are: 'den','active','cwd','rust','cav', and 'open'
@@ -178,7 +196,6 @@ server <- function(input, output, session) {
 
   D2 = reactive({
     # Set up a data.table with values.
-    browser()
     values = as.data.frame(value_matrix()) |>
       mutate(names = c('denning','mov',
                        'cwd','rust',
@@ -187,6 +204,10 @@ server <- function(input, output, session) {
 
     values = pivot_wider(values, names_from = names, values_from = V1)
     values = as.data.table(values)
+
+    values = values |>
+      mutate(across(-'movp', \(x) 100*x))
+
     # First, make sure habitat types are as a percentage of the total possible hectares, i.e. 3000
 
     # Implement some adjustments based on a mystical column 'movp'. These are all based
@@ -250,7 +271,9 @@ server <- function(input, output, session) {
   hexagons = read_sf('feta_hex_simplified.gpkg')
 
   # Reactive: user's uploaded shapefile.
-  user_file = reactive({
+  user_file = reactiveValues()
+
+  userpoly = reactive({
 
     user_file = input$user_shapefile
     if(is.null(user_file)) return(read_sf('empty_poly.gpkg'))
@@ -273,7 +296,27 @@ server <- function(input, output, session) {
 
       userpoly
     }
+    # Whenever a file is uploaded, I'd like to reset
+    # the scope of the map to BEC zones.
+    selected_bec('nothing')
+    selected_tsa('nothing')
+    current_scale('bec_zones')
+
     return(userpoly |> mutate(map_label = 'Uploaded Polygons'))
+  })
+
+  observe({
+    user_file$userpoly = userpoly()
+  })
+
+  observeEvent(input$reset, {
+    user_file$userpoly = read_sf('empty_poly.gpkg')
+  })
+
+  # If the user clicks on 'eliminate uploaded shape',
+  # do that here.
+  observeEvent(input$user_shapefile, ~ {
+    shiny::file
   })
 
   # Reactive: TSA polygons in selected BEC zone.
@@ -317,9 +360,9 @@ server <- function(input, output, session) {
     }
 
     #Has user uploaded file? If so, clip hexagons here.
-    if(user_file()$map_label == 'Uploaded Polygons'){
+    if(user_file$userpoly$map_label == 'Uploaded Polygons'){
       dat = dat |>
-        st_join(user_file() |> dplyr::mutate(is_in_user_file = T), st_intersects) |>
+        st_join(user_file$userpoly |> dplyr::mutate(is_in_user_file = T), st_intersects) |>
         filter(!is.na(is_in_user_file) | ID == 0) |>
         dplyr::select(-is_in_user_file)
     }
@@ -366,9 +409,9 @@ server <- function(input, output, session) {
         # If the user has uploaded a spatial file,
         # update raster pixel values for those areas
         # (we assume these would reduce habitat quality from 1 to 0 for simplicity's sake.
-        if(user_file()$map_label != ''){
+        if(user_file$userpoly$map_label != ''){
           clipped_choice_hexes = st_intersection(choice_hexes,
-                                                 st_transform(user_file(),
+                                                 st_transform(user_file$userpoly,
                                                              crs = 4326))
 
           pixel_value_updater = terra::extract(dat_r,
@@ -436,15 +479,8 @@ server <- function(input, output, session) {
         extracted_data = extracted_data[,lapply(.SD, \(x) sum(x,na.rm=T)/3000),
                                         by = .(ID,movp)]
 
-        ### RESUME HERE ###
-        ### start using Kyle's hexagons. That should clear up
-        ### duplication of 'movp', as well as 'movp' values of 0.
         incProgress(1/2,
                     message = 'Finished extracting values.')
-
-        # extracted_data = as_tibble(extracted_data)
-
-        # values = distinct(extracted_data)
 
         #Calculate the Mahalanobis D2 for each hexagon.
         # Make sure variables are in this order:
@@ -479,8 +515,6 @@ server <- function(input, output, session) {
           mutate(result_rows = n()) |>
           ungroup() |>
           filter(movp != 0 | result_rows == 1)
-
-        # hexagon_values = hexagon_values |> filter(!is.na(d2))
 
         output = st_set_geometry(
           hexagon_values,
@@ -517,22 +551,22 @@ server <- function(input, output, session) {
   })
 
   current_zoom = reactive({
-    if(user_file()$map_label != ''){
-      my_zoom = list(lng = st_centroid(user_file())$geom[[1]][1],
-                     lat = st_centroid(user_file())$geom[[1]][2],
+    if(user_file$userpoly$map_label != ''){
+      my_zoom = list(lng = st_centroid(user_file$userpoly)$geom[[1]][1],
+                     lat = st_centroid(user_file$userpoly)$geom[[1]][2],
                      zoom = 10)
     }
-    if(current_scale() == 'bec_zones' & user_file()$map_label == ''){
+    if(current_scale() == 'bec_zones' & user_file$userpoly$map_label == ''){
       my_zoom = list(lng = -126, lat = 54.58419, zoom = 5)
     }
-    if(current_scale() == 'TSA' & user_file()$map_label == ''){
+    if(current_scale() == 'TSA' & user_file$userpoly$map_label == ''){
       bec_zone_centroid = st_centroid(bec_zones[bec_zones$bec_zone == selected_bec(),])
 
       my_zoom = list(lng = bec_zone_centroid$geom[[1]][1],
                      lat = bec_zone_centroid$geom[[1]][2],
                      zoom = 6)
     }
-    if(current_scale() == 'hexagons' & user_file()$map_label == ''){
+    if(current_scale() == 'hexagons' & user_file$userpoly$map_label == ''){
       tsa_centroid = st_centroid(tsa_polys()[tsa_polys()$OBJECTID == selected_tsa(),])
 
       my_zoom = list(lng = tsa_centroid$geom[[1]][1],
@@ -605,6 +639,7 @@ server <- function(input, output, session) {
     leafletProxy('myleaf') |>
       clearGroup('selected_tsas') |>
       clearGroup('hexagons') |>
+      clearGroup('user_shapes') |>
       addPolygons(
         layerId = ~OBJECTID,
         color = 'darkgreen',
@@ -616,10 +651,8 @@ server <- function(input, output, session) {
         group = 'selected_tsas'
       ) |>
       addPolygons(
-        # layerId = ~hex_ID,
         color = 'black',
         weight = 1,
-        # label = hexagons_with_values()[[chosen_variable()]],
         label = hexagons_with_values()$d2,
         fillColor = ~hex_pal(hexagons_with_values()$d2),
         fillOpacity = 0.5,
@@ -627,11 +660,12 @@ server <- function(input, output, session) {
         group = 'hexagons'
       ) |>
       addPolygons(
+        group = 'user_shapes',
         color = 'orange',
         weight = 1,
         fillColor = 'red',
         fillOpacity = 0.5,
-        data = user_file()
+        data = reactive(user_file$userpoly)()
       ) |>
       setView(lng = current_zoom()$lng,
               lat = current_zoom()$lat,
