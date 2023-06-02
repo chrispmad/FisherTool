@@ -7,7 +7,16 @@ library(leaflet)
 library(data.table)
 # library(Ryacas) # for the TeXForm command
 library(terra)
-
+library(plotly)
+# if(system.file(package='ggchicklet') == ''){
+#   install.packages("ggchicklet",                    # Install & load ggchicklet package
+#                    repos = "https://cinc.rud.is")
+# }
+# library(ggchicklet)
+# if(system.file(package = 'bbplot') == ''){
+#   devtools::install_github('bbc/bbplot')
+# }
+# library(bbplot)
 
 source('modules/habitat_slider_module.R')
 
@@ -29,16 +38,16 @@ int_d2_slider_inputs = card(
         width = 1/3,
         h5("Habitat"),
         h5("Hectares"),
-        h5("Percent"),
+        h5('Percent of 3000 hectare hexagon'),
         style = 'text-align:center;font-weight:bold;font-size:large;'
       ),
       # layout_column_wrap(
       #   width = 1/2,
-        # numericInput('movp_input','Movp Input',min = 1, max = 5, value = 1),
-        radioButtons('population_input',h5('Population'),
-                    choices = c("SBS-moist" = "1","SBS-dry" = "2","dry forest" = "3","boreal" = "5"),
-                    inline = T,
-                    selected = '1')
+      # numericInput('movp_input','Movp Input',min = 1, max = 5, value = 1),
+      radioButtons('population_input',h5('Population'),
+                   choices = c("SBS-moist" = "1","SBS-dry" = "2","dry forest" = "3","boreal" = "5"),
+                   inline = T,
+                   selected = '1')
       # ),
     ),
     lapply(habitat_varnames$real_name, habitat_slider_module_ui)
@@ -47,33 +56,25 @@ int_d2_slider_inputs = card(
 
 int_d2_sidebar = sidebar(
   width = '60%',
-  fluidRow(
-    column(
-      width = 8,
-      h3("Per 3000 hectare hexagon", style = 'text-align:center;')
-    ),
-    column(
-      width = 4,
-      actionButton(
-        'set_ideal_values',
-        'Set Ideal Values'
-      )
-    )
-  ),
-  int_d2_slider_inputs
-)
+  int_d2_slider_inputs,
+  style = 'text-align:center;'
+  )
 
 formula = withMathJax('$$D^2 = (x - \\mu)\\prime\\Sigma^{-1} (x - \\mu)$$')
 
-main_content = div(
-  div(
-    textOutput('mean_D2'),
-    style = 'font-size:xx-large'
+main_content = card(
+  card_body(
+    h3(HTML('Mahalanobis D<sup>2</sup>'),
+       style = 'text-align:center;'),
+    div(
+      plotOutput('mean_D2'),
+      style = 'text-align:center;'
+    )
   ),
-  textOutput('our_value_matrix'),
-  HTML("<br><br><br>"),
-  h5("Mahalanobis Distance Formula"),
-  formula
+  card_body(
+    formula,
+    style = 'font-size:x-large;'
+  )
 )
 
 interactive_d2_nav = nav(
@@ -93,24 +94,18 @@ reset_selection_button = actionButton(
 )
 
 spat_ret_sidebar = sidebar(
+  width = '25%',
   h5("Home Range Visualization Tool"),
   fileInput(inputId = 'user_shapefile',
             label = HTML('Upload Potential Habitat Alteration<br>(.zip file of shapefile, or .gpkg)'),
             accept = c(".zip",".gpkg")),
   actionButton('reset', 'Clear Uploaded Shape(s)'),
   HTML("<br>"),
-  # selectInput(inputId = 'variable_for_leaflet',
-  #             label = 'Habitat Type to Visualize',
-  #             choices = c('Denning' = 'den',
-  #                         'Branch Resting' = 'branch',
-  #                         'CWD Resting' = 'cwd',
-  #                         'Cavity Resting' = 'cav',
-  #                         'Active' = 'active',
-  #                         'Open (less than)' = 'open'),
-  #             selectize = F
-  # ),
-  # HTML("<br>"),
-  reset_selection_button
+  reset_selection_button,
+  HTML("<br>"),
+  card(
+    plotOutput('hex_plot')
+  )
 )
 
 spat_ret_nav = nav(title = 'Home Range Visualization Tool',
@@ -165,23 +160,40 @@ server <- function(input, output, session) {
     )
   })
 
-  # default values that minimize D2 (from my own experimentation)
-  default_values = tibble(movp = c(1,2,3,5),
-                          denning = c(200),
-                          mov = c(1600,1600,1700,1600),
-                          cwd = c(900),
-                          rust = c(1000),
-                          cav = c(600),
-                          opn = c(1200,1200,700,1200))
+  # default values that minimize D2 (from Scott Yaeger's powerpoint presentation)
+  # Note: movp classifications - 1: SBS-moist, 2: SBS-dry, 3: dry forest, 5: boreal
+  default_values = tibble(movp = c(5,3,2,1),
+                          denning = c(702,69,66,114),
+                          mov = c(1686,1743,1539,1845),
+                          cwd = c(522,324,384,912),
+                          rust = c(255,123,573,1086),
+                          cav = c(0,0,15,30),
+                          opn = c(936,468,1119,981))
 
-  # Respond to 'set default' button
-  observeEvent(input$set_ideal_values, {
-      updateNumericInput(inputId = 'mov-mov', value = default_values[default_values$movp == as.numeric(input$population_input),]$mov)
-      updateNumericInput(inputId = 'denning-denning', value = default_values[default_values$movp == as.numeric(input$population_input),]$denning)
-      updateNumericInput(inputId = 'cwd-cwd', value = default_values[default_values$movp == as.numeric(input$population_input),]$cwd)
-      updateNumericInput(inputId = 'rust-rust', value = default_values[default_values$movp == as.numeric(input$population_input),]$rust)
-      updateNumericInput(inputId = 'cavity-cavity', value = default_values[default_values$movp == as.numeric(input$population_input),]$cav)
-      updateNumericInput(inputId = 'opn-opn', value = default_values[default_values$movp == as.numeric(input$population_input),]$opn)
+  # # Respond to 'set default' button
+  # observeEvent(input$set_ideal_values, {
+  #   updateNumericInput(inputId = 'mov-mov', value = default_values[default_values$movp == as.numeric(input$population_input),]$mov)
+  #   updateNumericInput(inputId = 'denning-denning', value = default_values[default_values$movp == as.numeric(input$population_input),]$denning)
+  #   updateNumericInput(inputId = 'cwd-cwd', value = default_values[default_values$movp == as.numeric(input$population_input),]$cwd)
+  #   updateNumericInput(inputId = 'rust-rust', value = default_values[default_values$movp == as.numeric(input$population_input),]$rust)
+  #   updateNumericInput(inputId = 'cavity-cavity', value = default_values[default_values$movp == as.numeric(input$population_input),]$cav)
+  #   updateNumericInput(inputId = 'opn-opn', value = default_values[default_values$movp == as.numeric(input$population_input),]$opn)
+  # })
+
+  # Have a reactive value that tells Shiny whether we are ready to render the
+  # gauge plot yet or not (if we don't have this, it gets updated
+  # while the inputs are updated, one by one, so we get a flickering effect)
+
+  # Respond to population selection by updating the numbers.
+  observeEvent(input$population_input, {
+
+    updateNumericInput(inputId = 'mov-mov', value = default_values[default_values$movp == as.numeric(input$population_input),]$mov)
+    updateNumericInput(inputId = 'denning-denning', value = default_values[default_values$movp == as.numeric(input$population_input),]$denning)
+    updateNumericInput(inputId = 'cwd-cwd', value = default_values[default_values$movp == as.numeric(input$population_input),]$cwd)
+    updateNumericInput(inputId = 'rust-rust', value = default_values[default_values$movp == as.numeric(input$population_input),]$rust)
+    updateNumericInput(inputId = 'cavity-cavity', value = default_values[default_values$movp == as.numeric(input$population_input),]$cav)
+    updateNumericInput(inputId = 'opn-opn', value = default_values[default_values$movp == as.numeric(input$population_input),]$opn)
+
   })
 
   # Set up the covariance matrix (these values come from Rich Weir, before he retired!)
@@ -189,13 +201,15 @@ server <- function(input, output, session) {
   # Note also that rows are: 1: SBS-moist, 2: SBS-dry, 3: dry forest, 5: boreal
   # Not sure why there is a 4th row... curious.
   fisher_covariance_matrix = list(matrix(c(0.536,	2.742,	0.603,	3.211,	-2.735,	1.816,	2.742,	82.721,	4.877,	83.281,	7.046,	-21.269,	0.603,	4.877,	0.872,	4.033,	-0.67,	-0.569,	3.211,	83.281,	4.033,	101.315,	-15.394,	-1.31,	-2.735,	7.046,	-0.67,	-15.394,	56.888,	-48.228,	1.816,	-21.269,	-0.569,	-1.31,	-48.228,	47.963), ncol =6, nrow =6),
-                          matrix(c(0.525,	-1.909,	-0.143,	2.826,	-6.891,	3.264,	-1.909,	96.766,	-0.715,	-39.021,	69.711,	-51.688,	-0.143,	-0.715,	0.209,	-0.267,	1.983,	-0.176,	2.826,	-39.021,	-0.267,	58.108,	-21.928,	22.234,	-6.891,	69.711,	1.983,	-21.928,	180.113,	-96.369,	3.264,	-51.688,	-0.176,	22.234,	-96.369,	68.499), ncol =6, nrow =6),
-                          matrix(c(2.905,	0.478,	4.04,	1.568,	-3.89,	0.478,	0.683,	6.131,	8.055,	-8.04,	4.04,	6.131,	62.64,	73.82,	-62.447,	1.568,	8.055,	73.82,	126.953,	-130.153,	-3.89,	-8.04,	-62.447,	-130.153,	197.783), ncol=5, nrow=5),
-                          matrix(c(193.235,	5.418,	42.139,	125.177,	-117.128,	5.418,	0.423,	2.926,	5.229,	-4.498,	42.139,	2.926,	36.03,	46.52,	-42.571,	125.177,	5.229,	46.52,	131.377,	-101.195,	-117.128,	-4.498,	-42.571,	-101.195,	105.054), ncol =5, nrow =5))
+                                  matrix(c(0.525,	-1.909,	-0.143,	2.826,	-6.891,	3.264,	-1.909,	96.766,	-0.715,	-39.021,	69.711,	-51.688,	-0.143,	-0.715,	0.209,	-0.267,	1.983,	-0.176,	2.826,	-39.021,	-0.267,	58.108,	-21.928,	22.234,	-6.891,	69.711,	1.983,	-21.928,	180.113,	-96.369,	3.264,	-51.688,	-0.176,	22.234,	-96.369,	68.499), ncol =6, nrow =6),
+                                  matrix(c(2.905,	0.478,	4.04,	1.568,	-3.89,	0.478,	0.683,	6.131,	8.055,	-8.04,	4.04,	6.131,	62.64,	73.82,	-62.447,	1.568,	8.055,	73.82,	126.953,	-130.153,	-3.89,	-8.04,	-62.447,	-130.153,	197.783), ncol=5, nrow=5),
+                                  matrix(c(193.235,	5.418,	42.139,	125.177,	-117.128,	5.418,	0.423,	2.926,	5.229,	-4.498,	42.139,	2.926,	36.03,	46.52,	-42.571,	125.177,	5.229,	46.52,	131.377,	-101.195,	-117.128,	-4.498,	-42.571,	-101.195,	105.054), ncol =5, nrow =5))
 
 
-  D2 = reactive({
+D2 = reactive({
+
     # Set up a data.table with values.
+
     values = as.data.frame(value_matrix()) |>
       mutate(names = c('denning','mov',
                        'cwd','rust',
@@ -228,13 +242,80 @@ server <- function(input, output, session) {
     values[ denning < 0.001, d2:= NA][mov < 0.001,  d2:= NA][cwd  < 0.001,  d2 := NA][rust  < 0.001,  d2 := NA]
 
     return(as.data.frame(values))
-      })
+  })
 
-  output$mean_D2 = renderText({
-    d2_values = D2()$d2
-    return(
-      paste0("D2 Result: ",round(mean(d2_values),3))
-    )})
+  ###function for colour code
+  colour_func_gauge <- function(x, value){
+    case_when(
+      x[[value]] < 7 ~ 'darkgreen',
+      x[[value]] >= 7 & x[[value]] < 14 ~ 'darkorange',
+      x[[value]] >= 14 ~ 'darkred'
+    )
+  }
+
+  output$mean_D2 = renderPlot({
+
+    d2_value = D2()$d2
+
+    if(d2_value > 50) d2_value = 50
+
+    max_d2 = 50
+
+    df = tibble(max = max_d2,
+                value = d2_value) |>
+      mutate(value_half = 0.5*value)
+
+    my_colwidth = 0.5
+    my_colalpha = 0.5
+    my_linewidth = 10
+
+    df = df |>
+      mutate(value_lab = case_when(
+        value < 0.01 ~ '< 0.01',
+        value == 50 ~ '> 50',
+        T ~ as.character(round(value,2))
+      ))
+
+    ggplot(df, aes(x = 1, xend = 1)) +
+      geom_col(
+        aes(x = 1, y = 50),
+        width = my_colwidth,
+        alpha = my_colalpha,
+        col = 'black',
+        fill = 'darkred') +
+      geom_col(
+        aes(x = 1, y = 14),
+        width = my_colwidth,
+        alpha = my_colalpha,
+        col = 'black',
+        fill = 'darkorange') +
+      geom_col(
+        aes(x = 1, y = 7),
+        width = my_colwidth,
+        alpha = my_colalpha,
+        col = 'black',
+        fill = 'darkgreen') +
+      geom_segment(lwd = my_linewidth, lineend = 'round',
+                   aes(y = 0, yend = abs(value - 0.5)),
+                   colour = colour_func_gauge(df, 'value')) +
+      geom_text(aes(x = 0, y = 1, label = value_lab), size = 16) +
+      scale_fill_manual(values = colour_func_gauge(df, 'value')) +
+      xlab("") + ylab("") +
+      theme_classic() +
+      coord_polar(theta = "y",start=-pi/2) +
+      ylim(0,100) +
+      theme(axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            axis.line = element_blank(),
+            legend.position = "top",
+            legend.text.align = 0,
+            legend.background = ggplot2::element_blank(),
+            legend.title = ggplot2::element_blank(),
+            legend.key = ggplot2::element_blank(),
+            legend.text = ggplot2::element_text(size=18,
+                                                color="#222222"),
+            plot.title = ggtext::element_markdown())
+  })
 
   # --------------------------------------------------------------
   # Nav 2: Habitat Retention Tool
@@ -300,6 +381,7 @@ server <- function(input, output, session) {
     # the scope of the map to BEC zones.
     selected_bec('nothing')
     selected_tsa('nothing')
+    selected_hex('nothing')
     current_scale('bec_zones')
 
     return(userpoly |> mutate(map_label = 'Uploaded Polygons'))
@@ -311,6 +393,10 @@ server <- function(input, output, session) {
 
   observeEvent(input$reset, {
     user_file$userpoly = read_sf('empty_poly.gpkg')
+    selected_bec('nothing')
+    selected_tsa('nothing')
+    selected_hex('nothing')
+    current_scale('bec_zones')
   })
 
   # If the user clicks on 'eliminate uploaded shape',
@@ -349,8 +435,11 @@ server <- function(input, output, session) {
                     filter(TSA_NUMBER == selected_tsa()) |>
                     dplyr::select(TSA_NUMBER),
                   st_intersects) |>
-          filter(!is.na(TSA_NUMBER))
-          # filter(tsa_obj_id %in% selected_tsa())
+          filter(!is.na(TSA_NUMBER)) |>
+          st_join(bec_zones) |>
+          filter(!is.na(bec_zone)) |>
+          dplyr::select(-bec_zone)
+        # filter(tsa_obj_id %in% selected_tsa())
       }
       # if(selected_tsa() != 'nothing' & selected_bec() == 'sub-boreal moist'){
       #   dat = read_sf('data/hexagons_subb_moist.gpkg') |>
@@ -381,7 +470,7 @@ server <- function(input, output, session) {
     hexes_to_summarise = choice_hexes$ID
 
     if('TSA_NUMBER' %in% names(choice_hexes)){
-    # shiny Feedback!
+      # shiny Feedback!
       withProgress(message = 'Summarizing 1-hectare cell values...', {
 
         incProgress(0.2,
@@ -390,7 +479,7 @@ server <- function(input, output, session) {
         extracted_data = terra::extract(dat_r,
                                         st_transform(choice_hexes,
                                                      crs = 3005)
-                                        )
+        )
         # The extracted data needs to have an ID column that lines up with
         # the hexagon spatial object's ID column. Add that in here.
         extracted_data = extracted_data |>
@@ -412,7 +501,7 @@ server <- function(input, output, session) {
         if(user_file$userpoly$map_label != ''){
           clipped_choice_hexes = st_intersection(choice_hexes,
                                                  st_transform(user_file$userpoly,
-                                                             crs = 4326))
+                                                              crs = 4326))
 
           pixel_value_updater = terra::extract(dat_r,
                                                st_transform(clipped_choice_hexes,
@@ -476,7 +565,7 @@ server <- function(input, output, session) {
         # habitat type. Do this for each chosen hexagon ID separately,
         # and also for each different population (i.e. 'movp').
 
-        extracted_data = extracted_data[,lapply(.SD, \(x) sum(x,na.rm=T)/3000),
+        extracted_data = extracted_data[,lapply(.SD, \(x) 100*sum(x,na.rm=T)/3000),
                                         by = .(ID,movp)]
 
         incProgress(1/2,
@@ -523,10 +612,23 @@ server <- function(input, output, session) {
       })
     } else {
       output = st_set_geometry(
-        tibble(a = 0) |>
+        tibble(a = 0,
+               ID = 0,
+               d2 = 1,
+               d2_b = 1) |>
           mutate(hex_ID = 0),
         st_geometry(choice_hexes)
       )
+    }
+
+    # Optional addition: calculate new column that is binned values
+    if(!'a' %in% names(output)){
+      output = output |>
+        mutate(d2_b = data.table::fcase(
+          d2 < 7, '1',
+          d2 >= 7 & d2 < 14, '2',
+          d2 >= 14, '3'
+        ))
     }
 
     return(output)
@@ -537,7 +639,7 @@ server <- function(input, output, session) {
 
   selected_tsa = reactiveVal('nothing')
 
-  # selected_hex = reactiveVal('nothing')
+  selected_hex = reactiveVal('nothing')
 
   current_scale = reactiveVal('bec_zones')
 
@@ -547,7 +649,7 @@ server <- function(input, output, session) {
     current_scale('bec_zones')
     selected_bec('nothing')
     selected_tsa('nothing')
-    # selected_hex('nothing')
+    selected_hex('nothing')
   })
 
   current_zoom = reactive({
@@ -584,62 +686,128 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$myleaf_shape_click, {
-    # # Are we on to the hexagon selection scale? If so, grab shape id.
-    if(current_scale() == 'hexagons'){
-      # # Have we already selected one hexagon? If so, add on the new ID.
-      # if(sum(str_detect(selected_hex(), 'nothing')) == 0){
-      #   new_hex_selection = c(selected_hex(), input$myleaf_shape_click$id)
-      #   selected_hex(unique(new_hex_selection[new_hex_selection != 'no_selection']))
-      # } else {
-      #   selected_hex(input$myleaf_shape_click$id)
-      # }
-      # # current_scale('pixels')
-    }
-    # Are we on to the TSA selection scale? If so, grab shape id.
-    if(current_scale() == 'TSA'){
-      selected_tsa(input$myleaf_shape_click$id)
-      current_scale('hexagons')
-    }
-    # Still on BEC zone selection? Grab id!
-    if(input$myleaf_shape_click$id %in% c("boreal","sub-boreal dry","sub-boreal moist")){
-      selected_bec(input$myleaf_shape_click$id)
-      current_scale('TSA')
+    if(!is.null(input$myleaf_shape_click$id)){
+      # Are we on to the hexagon selection scale? If so, grab shape id.
+      if(current_scale() == 'hexagons'){
+        selected_hex(input$myleaf_shape_click$id)
+        # # Have we already selected one hexagon? If so, add on the new ID.
+        # if(sum(str_detect(selected_hex(), 'nothing')) == 0){
+        #   new_hex_selection = c(selected_hex(), input$myleaf_shape_click$id)
+        #   selected_hex(unique(new_hex_selection[new_hex_selection != 'no_selection']))
+        # } else {
+        #   selected_hex(input$myleaf_shape_click$id)
+        # }
+        # # current_scale('pixels')
+      }
+      # Are we on to the TSA selection scale? If so, grab shape id.
+      if(current_scale() == 'TSA'){
+        selected_tsa(input$myleaf_shape_click$id)
+        current_scale('hexagons')
+      }
+      # Still on BEC zone selection? Grab id!
+      if(input$myleaf_shape_click$id %in% c("boreal","sub-boreal dry","sub-boreal moist")){
+        selected_bec(input$myleaf_shape_click$id)
+        current_scale('TSA')
+      }
     }
   })
 
-  # Which variable to see on the leaflet map?
-  chosen_variable = reactive({
-    input$variable_for_leaflet
+  # Render a plot for the selected hex (if any)
+  hexagon_in_focus = reactive({
+    if(selected_hex() == 'nothing') return(read_sf('empty_poly.gpkg') |>
+                                             mutate(d2 = 0, d2_b = 0))
+
+    return(
+      hexagons_with_values() |>
+        filter(ID == selected_hex())
+    )
+  })
+
+  output$hex_plot = renderPlot({
+
+    if(selected_hex() == 'nothing'){
+      ggplot() +
+        geom_text(aes(x = 1, y = 1),
+                  label = "Please select a hexagon") +
+        ggthemes::theme_map()
+    } else {
+    ggplot(hexagon_in_focus()) +
+          geom_col(aes(x = 'Denning', y = denning)) +
+          geom_col(aes(x = 'Movement', y = mov)) +
+          geom_col(aes(x = 'CWD', y = cwd)) +
+          geom_col(aes(x = 'Rust', y = rust)) +
+          geom_col(aes(x = 'Cavity', y = cavity)) +
+          geom_col(aes(x = 'Open', y = opn)) +
+          labs(x = '', y = 'Percent (%)') +
+          # scale_y_continuous(labels = scales::percent_format()) +
+          theme_minimal() +
+        coord_flip() +
+        theme(axis.text = element_text(size = 12),
+              axis.title = element_text(size = 14))
+          #theme(panel.grid = element_blank(),
+           #     axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+    }
   })
 
   bec_zone_pal = leaflet::colorFactor(
     palette = 'Dark2',
     domain = bec_zones$bec_zone)
 
-  hex_pal = leaflet::colorNumeric(
-    palette = 'Spectral',
-    domain = c(0, 1000),
-    reverse = T,
-    na.color = 'grey'
+  # hex_pal = leaflet::colorNumeric(
+  #   palette = 'Spectral',
+  #   domain = c(0, 1000),
+  #   reverse = T,
+  #   na.color = 'grey'
+  # )
+  # hex_pal = leaflet::colorBin(
+  #   palette = 'RdYlGn',
+  #   domain = c(0, 1000),
+  #   bins = c(0,7,14,50),
+  #   reverse = T,
+  #   na.color = 'grey'
+  # )
+  hex_pal = leaflet::colorFactor(
+    palette = c('darkgreen','darkorange','darkred'),
+    levels = c('1','2','3'),
+    na.color = 'transparent'
   )
+
+  labels = c('0 - 7','7 - 14','14 - 50+')
 
   output$myleaf = renderLeaflet({
     leaflet() |>
+      envreportutils::add_bc_home_button() |>
       addProviderTiles(providers$CartoDB) |>
       addPolygons(layerId = ~bec_zone,
                   label = ~bec_zone,
-                  color = 'black',
-                  weight = 1,
+                  color = ~bec_zone_pal(bec_zone),
+                  weight = 2,
+                  opacity = 1,
                   fillColor = ~bec_zone_pal(bec_zone),
                   data = bec_zones) |>
-      addLegend(pal = hex_pal, values = c(0,1000))
+      addLegend(pal = hex_pal,
+                values = c('1','2','3'),
+                labFormat = function(type, cuts, p) {  # Here's the trick
+                  paste0(labels)
+                }
+      )
   })
 
   observe({
     leafletProxy('myleaf') |>
+      clearGroup('bec_zones') |>
       clearGroup('selected_tsas') |>
       clearGroup('hexagons') |>
+      clearGroup('hexagon_in_focus') |>
       clearGroup('user_shapes') |>
+      addPolygons(layerId = ~bec_zone,
+                  label = ~bec_zone,
+                  color = ~bec_zone_pal(bec_zone),
+                  weight = 2,
+                  opacity = ifelse(current_scale() == 'bec_zones', 0.5,0.05),
+                  fillColor = ~bec_zone_pal(bec_zone),
+                  data = bec_zones,
+                  group = 'bec_zones') |>
       addPolygons(
         layerId = ~OBJECTID,
         color = 'darkgreen',
@@ -651,13 +819,24 @@ server <- function(input, output, session) {
         group = 'selected_tsas'
       ) |>
       addPolygons(
+        layerId = ~ID,
         color = 'black',
         weight = 1,
-        label = hexagons_with_values()$d2,
-        fillColor = ~hex_pal(hexagons_with_values()$d2),
+        label = round(hexagons_with_values()$d2,3),
+        fillColor = ~hex_pal(hexagons_with_values()$d2_b),
         fillOpacity = 0.5,
         data = hexagons_with_values(),
         group = 'hexagons'
+      ) |>
+      addPolygons(
+        layerId = ~ID,
+        color = 'orange',
+        weight = 2,
+        label = round(hexagon_in_focus()$d2,3),
+        fillColor = ~hex_pal(hexagon_in_focus()$d2_b),
+        fillOpacity = 0.5,
+        data = hexagon_in_focus(),
+        group = 'hexagon_in_focus'
       ) |>
       addPolygons(
         group = 'user_shapes',
